@@ -1,6 +1,7 @@
 import requests
 import json
 from datetime import datetime, timedelta
+from common import TimedEvent
 
 RAW_PATH = 'data/lichess_raw.json'
 def get_and_save_raw_data():
@@ -19,6 +20,11 @@ def get_and_save_raw_data():
     with open(RAW_PATH, 'w') as f:
         json.dump(games, f)
 
+def load_raw_data():
+    with open(RAW_PATH, 'r') as f:
+        games = json.load(f)
+    return games
+
 def analyze():
     with open(RAW_PATH, 'r') as f:
         games = json.load(f)
@@ -36,7 +42,23 @@ def analyze():
     print(speeds)
     print(f'Total games played: {len(games)}')
     print(f'Total time spent: {all_time} (This is different than lichess calculation on profile page for some reason)')
-    
+
+class LichessGame(TimedEvent):
+    def __init__(self, raw_game):
+        self._raw = raw_game
+        self._start_time = datetime.fromtimestamp(raw_game['createdAt']/1000)
+        self._end_time = datetime.fromtimestamp(raw_game['lastMoveAt']/1000)
+        self._duration = self._end_time - self._start_time
+    def start_time(self) -> datetime:
+        return self._start_time
+    def end_time(self) -> datetime:
+        return self._end_time
+    def duration(self) -> timedelta:
+        return self._duration
+
+def get_all_events():
+    games = load_raw_data()
+    return [LichessGame(game) for game in games]    
 
 if __name__ == '__main__':
     # get_and_save_raw_data()

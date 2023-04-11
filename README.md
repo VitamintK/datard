@@ -10,7 +10,9 @@ This repo will attempt to collect personal data from various sources and expose 
 
 # timed data
 
+```
 {
     timestamp: timestamp,
-    
+
 }
+```
