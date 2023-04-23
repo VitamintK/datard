@@ -48,7 +48,10 @@ class LichessGame(TimedEvent):
         self._raw = raw_game
         self._start_time = datetime.fromtimestamp(raw_game['createdAt']/1000)
         self._end_time = datetime.fromtimestamp(raw_game['lastMoveAt']/1000)
-        self._duration = self._end_time - self._start_time
+        if raw_game['speed'] == 'correspondence':
+            self._duration = timedelta()
+        else:
+            self._duration = self._end_time - self._start_time
     def start_time(self) -> datetime:
         return self._start_time
     def end_time(self) -> datetime:
