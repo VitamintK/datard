@@ -115,25 +115,40 @@ def login(username, password):
     raise ValueError('NYT-S cookie not found')
 
 class CrosswordSolve(TimedEvent):
-    def __init__(self, raw_solve):
+    def __init__(self, raw_solve, raw_info):
         self._raw = raw_solve
+        self._raw_info = raw_info
         self._start_time = datetime.fromtimestamp(raw_solve['firsts']['opened'])
         if 'solved' in raw_solve['firsts']:
             self._end_time = datetime.fromtimestamp(raw_solve['firsts']['solved'])
         else:
             self._end_time = None
         self._duration = timedelta(seconds=raw_solve['calcs']['secondsSpentSolving'])
+        self._publish_date = datetime.strptime(raw_info['print_date'], '%Y-%m-%d').date()
+        self._solved = ('solved' in raw_solve['calcs']) and raw_solve['calcs']['solved']
+        self._starred = raw_info['star']=='Gold'
+        assert raw_info['star'] in [None, 'Gold'], raw_info
     def start_time(self) -> datetime:
         return self._start_time
     def end_time(self) -> datetime:
         return self._end_time
     def duration(self) -> timedelta:
         return self._duration
+    def is_solved(self) -> bool:
+        return self._solved
+    def is_starred(self) -> bool:
+        return self._starred
+    def counts_for_stats(self) -> bool:
+        """The 'Stats' screen in web and iOS, which displays solve times by day of week"""
+        return self._solved and 'revealed' not in self._raw['firsts']
+    def get_publish_day_of_week(self):
+        return self._publish_date.weekday()
     
 def get_all_events():
-    # puzzle_list = load_raw_puzzles_list()
+    puzzle_list = load_raw_puzzles_list()
+    puzzle_info_by_id = {str(puzzle['puzzle_id']): puzzle for puzzle in puzzle_list}
     puzzle_solves = load_raw_puzzle_solves()
-    return [CrosswordSolve(solve) for solve in puzzle_solves.values()]
+    return [CrosswordSolve(solve, puzzle_info_by_id[puzzle_id]) for puzzle_id, solve in puzzle_solves.items()]
 
 # def get_puzzle_stats(date, cookie):
 #     puzzle_resp = requests.get(
@@ -197,8 +212,18 @@ if __name__ == '__main__':
     # get_and_save_puzzles_list()
     # puzzle_list = load_raw_puzzles_list()
     # get_and_save_puzzle_solves_from_list(puzzle_list)
-    pass
-    
+    all_solves = get_all_events()
+    times_by_weekday: "list[list[CrosswordSolve]]" = [[] for i in range(7)]
+    for solve in all_solves:
+        times_by_weekday[solve.get_publish_day_of_week()].append(solve)
+    weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    for weekday in range(7):
+        solves = times_by_weekday[weekday]
+        weekday_name = weekday_names[weekday]
+        solved_solves = [solve for solve in solves if solve.counts_for_stats()]
+        print(f'{weekday_name} - num started: {len(solves)}, num solved: {len(solved_solves)}, avg time: {sum((solve.duration() for solve in solved_solves), start=timedelta())/len(solved_solves)}')
+    print(f'total solved: {len([solve for solve in all_solves if solve.counts_for_stats()])}')
+    print(f'total solved: {len([solve for solve in all_solves if solve.is_solved()])}')
     
     # start_date = datetime.strptime(args.start_date, DATE_FORMAT)
     # end_date = datetime.strptime(args.end_date, DATE_FORMAT)
