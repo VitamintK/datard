@@ -8,6 +8,12 @@ This repo will attempt to collect personal data from various sources and expose 
 2. storage of the data, in their raw form and/or common form
 3. tools to analyze and visualize data
 
+WIP
+
+Here's an example of what it can do so far!
+
+![chart showing my time spent on various pursuits per year](figure_1.png)
+
 # timed data
 
 ```

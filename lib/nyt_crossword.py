@@ -43,6 +43,7 @@ def get_and_save_puzzles_list():
         r = requests.get(
             PUZZLE_LIST.format(user_id=87402204),
             params={
+                'publish_type': 'daily',
                 'sort_order': 'asc',
                 'sort_by': 'print_date',
                 'date_start': first_day.strftime('%Y-%m-%d'),
@@ -52,10 +53,29 @@ def get_and_save_puzzles_list():
                 'NYT-S': cookie,
             },
         )
+        r.raise_for_status()
         results.extend(r.json()['results'])
+        time.sleep(0.2)
+
+        r = requests.get(
+            PUZZLE_LIST.format(user_id=87402204),
+            params={
+                'publish_type': 'mini',
+                'sort_order': 'asc',
+                'sort_by': 'print_date',
+                'date_start': first_day.strftime('%Y-%m-%d'),
+                'date_end': last_day.strftime('%Y-%m-%d')
+            },
+            cookies={
+                'NYT-S': cookie,
+            },
+        )
+        r.raise_for_status()
+        if r.json()['results'] is not None:
+            results.extend(r.json()['results'])
 
         # Move to the next month
-        first_day = first_day + datetime.timedelta(days=32)
+        first_day = first_day + timedelta(days=32)
         time.sleep(0.75)
     # results.sort(key=lambda x: x['print_date'])
     with open(RAW_PATH_LIST, 'w') as f:
@@ -209,9 +229,11 @@ if __name__ == '__main__':
     #             else:
     #                 raise e
     
-    # get_and_save_puzzles_list()
-    # puzzle_list = load_raw_puzzles_list()
-    # get_and_save_puzzle_solves_from_list(puzzle_list)
+    get_and_save_puzzles_list()
+    puzzle_list = load_raw_puzzles_list()
+    get_and_save_puzzle_solves_from_list(puzzle_list)
+
+
     all_solves = get_all_events()
     times_by_weekday: "list[list[CrosswordSolve]]" = [[] for i in range(7)]
     for solve in all_solves:
