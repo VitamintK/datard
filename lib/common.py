@@ -6,3 +6,15 @@ class TimedEvent:
         pass
     def duration(self) -> timedelta:
         pass
+
+class MonetaryEvent:
+    def placement_time(self) -> datetime:
+        pass
+    def predicted_settle_time(self) -> datetime:
+        pass
+    def actual_settle_time(self) -> datetime:
+        pass
+    def profit(self) -> int:
+        """profit in cents"""
+        pass
+    
