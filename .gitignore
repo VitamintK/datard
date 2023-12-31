@@ -1,4 +1,6 @@
-data/*.json
-data/*.csv
+data/**/*.json
+data/**/*.csv
 **/__pycache__/
 secrets/*.txt
+http_cache
+

@@ -1,13 +1,20 @@
 import calendar
 from datetime import date, datetime, timedelta
 import os
-import requests
+import random
+import requests_cache
 import time
 import json
-from common import TimedEvent
+from common import DATA_DIR, TimedEvent
+from utils import sleep_if_not_cached
 
-RAW_PATH_LIST = 'data/nyt_crossword_list.json'
-RAW_PATH_SOLVES = 'data/nyt_crossword_solves.json'
+RawPuzzleSolves = 'dict[str, dict]'
+
+RAW_PATH_LIST = f'{DATA_DIR}/nyt_crossword_list.json'
+RAW_PATH_SOLVES = f'{DATA_DIR}/nyt_crossword_solves.json'
+cookie = os.getenv('NYT_COOKIE')
+
+session = requests_cache.CachedSession('http_cache', backend='filesystem')
 
 # First API from https://github.com/mattdodge/nyt-crossword-stats, presumably for the iOS iphone app:
 # API_ROOT = 'https://nyt-games-prd.appspot.com/svc/crosswords'
@@ -17,8 +24,29 @@ RAW_PATH_SOLVES = 'data/nyt_crossword_solves.json'
 
 # A second API for web(?) at:
 # https://edge.games.nyti.nyt.net/svc/crosswords/v3/{id}/puzzles.json?publish_type=daily&sort_order=asc&sort_by=print_date&date_start=2023-04-01&date_end=2023-04-30
-PUZZLE_LIST = "https://edge.games.nyti.nyt.net/svc/crosswords/v3/{user_id}/puzzles.json"
-SOLVE_INFO = 'https://www.nytimes.com/svc/crosswords/v6/game/{puzzle_id}.json'
+PUZZLE_LIST_URL = "https://edge.games.nyti.nyt.net/svc/crosswords/v3/{user_id}/puzzles.json"
+SOLVE_INFO_URL = 'https://www.nytimes.com/svc/crosswords/v6/game/{puzzle_id}.json'
+
+def fetch_and_update_raw_data():
+    print('fetching all NYT Crossword data...')
+    get_and_save_puzzles_list()
+    puzzle_list = load_raw_puzzles_list()
+    existing_puzzle_solves = load_raw_puzzle_solves()
+    puzzle_list_to_fetch = []
+    for puzzle in puzzle_list:
+        puzzle_id = str(puzzle['puzzle_id'])
+        if puzzle_id in existing_puzzle_solves:
+            raw_solve = existing_puzzle_solves[puzzle_id]
+            if ('solved' in raw_solve['calcs']) and raw_solve['calcs']['solved']:
+                # TODO: instead of just checking if it's solved, check if it's more solved now (according to puzzle_list) than it was before.
+                #       also, error or warn if it's less solved now than it was before.
+                print(f'Puzzle {puzzle["print_date"]} already fetched (in solved state). Not fetching again.')
+                continue
+        puzzle_list_to_fetch.append(puzzle)
+    fetched_puzzle_solves = fetch_puzzle_solves_from_list(puzzle_list_to_fetch)
+    existing_puzzle_solves.update(fetched_puzzle_solves)
+    with open(RAW_PATH_SOLVES, 'w') as f:
+        json.dump(existing_puzzle_solves, f)
 
 def get_and_save_puzzles_list():
     start_date = date(2014, 1, 1)
@@ -40,8 +68,10 @@ def get_and_save_puzzles_list():
         print(f"First day of {first_day.strftime('%B %Y')}: {first_day}")
         print(f"Last day of {first_day.strftime('%B %Y')}: {last_day}")
 
-        r = requests.get(
-            PUZZLE_LIST.format(user_id=87402204),
+        if cookie is None or cookie.strip() == '':
+            raise ValueError('NYT_COOKIE cookie not found')
+        r = session.get(
+            PUZZLE_LIST_URL.format(user_id=87402204),
             params={
                 'publish_type': 'daily',
                 'sort_order': 'asc',
@@ -52,13 +82,14 @@ def get_and_save_puzzles_list():
             cookies={
                 'NYT-S': cookie,
             },
+            expire_after=timedelta(days=random.randint(1,30)),
         )
         r.raise_for_status()
         results.extend(r.json()['results'])
-        time.sleep(0.2)
+        sleep_if_not_cached(r, 0.2)
 
-        r = requests.get(
-            PUZZLE_LIST.format(user_id=87402204),
+        r = session.get(
+            PUZZLE_LIST_URL.format(user_id=87402204),
             params={
                 'publish_type': 'mini',
                 'sort_order': 'asc',
@@ -69,6 +100,7 @@ def get_and_save_puzzles_list():
             cookies={
                 'NYT-S': cookie,
             },
+            expire_after=timedelta(days=random.randint(1,30)),
         )
         r.raise_for_status()
         if r.json()['results'] is not None:
@@ -76,7 +108,7 @@ def get_and_save_puzzles_list():
 
         # Move to the next month
         first_day = first_day + timedelta(days=32)
-        time.sleep(0.75)
+        sleep_if_not_cached(r, 0.75)
     # results.sort(key=lambda x: x['print_date'])
     with open(RAW_PATH_LIST, 'w') as f:
         json.dump(results, f)
@@ -87,37 +119,40 @@ def load_raw_puzzles_list():
         puzzle_list = json.load(f)
     return puzzle_list
 
-def load_raw_puzzle_solves():
+def load_raw_puzzle_solves() -> RawPuzzleSolves:
     with open(RAW_PATH_SOLVES, 'r') as f:
         puzzle_solves = json.load(f)
     return puzzle_solves
 
 def get_puzzle_solve(puzzle_id):
-    r = requests.get(
-        SOLVE_INFO.format(puzzle_id=puzzle_id),
+    r = session.get(
+        SOLVE_INFO_URL.format(puzzle_id=puzzle_id),
         cookies={'NYT-S': cookie}
     )
     return r.json()
 
-def get_and_save_puzzle_solves_from_list(puzzle_list: list):
+def fetch_and_save_puzzle_solves_from_list(puzzle_list: list):
+    all_puzzle_solves = fetch_puzzle_solves_from_list(puzzle_list)
+    with open(RAW_PATH_SOLVES, 'w') as f:
+        json.dump(all_puzzle_solves, f)
+        # TODO: if we want to save as we go instead of saving at the end, we can either pass in a callback to fetch_puzzle_solves_from_list,
+        # or we can make fetch_puzzle_solves_from_list a generator and yield each puzzle solve as we go.
+
+def fetch_puzzle_solves_from_list(puzzle_list: list) -> RawPuzzleSolves:
     all_puzzle_solves = dict()
     for puzzle in puzzle_list:
         if puzzle['percent_filled'] == 0:
-            print('skip', puzzle['print_date'])
+            print(f"Puzzle {puzzle['print_date']} is 0% filled. Not fetching.")
             continue
         puzzle_id = puzzle['puzzle_id']
         puzzle_solve = get_puzzle_solve(puzzle_id)
         all_puzzle_solves[puzzle_id] = puzzle_solve
         time.sleep(1)
-        with open(RAW_PATH_SOLVES, 'w') as f:
-            json.dump(all_puzzle_solves, f)
     return all_puzzle_solves
-
-
 
 def login(username, password):
     """ Return the NYT-S cookie after logging in """
-    login_resp = requests.post(
+    login_resp = requests_cache.post(
         'https://myaccount.nytimes.com/svc/ios/v2/login',
         data={
             'login': username,
@@ -171,7 +206,7 @@ def get_all_events():
     return [CrosswordSolve(solve, puzzle_info_by_id[puzzle_id]) for puzzle_id, solve in puzzle_solves.items()]
 
 # def get_puzzle_stats(date, cookie):
-#     puzzle_resp = requests.get(
+#     puzzle_resp = requests_cache.get(
 #         PUZZLE_INFO.format(date=date),
 #         cookies={
 #             'NYT-S': cookie,
@@ -180,7 +215,7 @@ def get_all_events():
 #     puzzle_resp.raise_for_status()
 #     puzzle_date = datetime.strptime(date, DATE_FORMAT)
 #     puzzle_info = puzzle_resp.json().get('results')[0]
-#     solve_resp = requests.get(
+#     solve_resp = requests_cache.get(
 #         SOLVE_INFO.format(game_id=puzzle_info['puzzle_id']),
 #         cookies={
 #             'NYT-S': cookie,
@@ -213,7 +248,7 @@ if __name__ == '__main__':
     # for example,
     # NYT_COOKIE=`cat secrets/nyt_cookie.txt` python lib/nyt_crossword.py
     # args = parser.parse_args()
-    cookie = os.getenv('NYT_COOKIE')
+    
     # print(args.username, args.password, cookie)
     # if not cookie:
     #     # sometimes this transiently fails, so try multiple times??
@@ -221,7 +256,7 @@ if __name__ == '__main__':
     #     for i in range(NUM_ATTEMPTS):
     #         try:
     #             cookie = login(args.username, args.password)
-    #         except requests.exceptions.HTTPError as e:
+    #         except requests_cache.exceptions.HTTPError as e:
     #             if i < NUM_ATTEMPTS-1:
     #                 print(f'attempt to login failed with error {e}')
     #                 print("Trying again!")
@@ -231,7 +266,7 @@ if __name__ == '__main__':
     
     get_and_save_puzzles_list()
     puzzle_list = load_raw_puzzles_list()
-    get_and_save_puzzle_solves_from_list(puzzle_list)
+    fetch_and_save_puzzle_solves_from_list(puzzle_list)
 
 
     all_solves = get_all_events()

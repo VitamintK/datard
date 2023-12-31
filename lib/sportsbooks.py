@@ -3,9 +3,16 @@ from datetime import datetime,timedelta
 import csv
 from typing import TypedDict
 from enum import Enum
+import os
 
 # Currently using SportsbookScout for DK and FD: https://www.sportsbookscout.com/sports-betting-guides/download-export-bet-history-draftkings-sportsbook
 # TODO: some more automated solution
+# TODO: at least fanduel (and probably dk) bonus bets / free bet tracking:
+#       e.g. fanduel when using bonus bets, there is no field to indicate such. However, we should be able to infer b.c. the payout/potential payout does NOT include the stake.
+#       And there is no indication when odds are boosted. This latter issue is not fixable as long as we get data from SBS.
+
+def fetch_and_update_raw_data():
+    print('fetch_and_update_raw_data() not implemented for sportsbooks, since the current solution is manual.')
 
 class Sbs_draftkings_csv_row(TypedDict):
     External_Bet_ID: str
@@ -97,6 +104,11 @@ def parse_cents_from_string(usd_string: str) -> int:
         return 0
     return int(float(usd_string) * 100)
 
+def parse_datetime(s: str) -> datetime:
+    if s == '':
+        return None
+    return datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+
 class SportsBet(MonetaryEvent):
     def placement_time(self) -> datetime:
         return None
@@ -107,6 +119,15 @@ class SportsBet(MonetaryEvent):
     def profit(self) -> int:
         """profit in cents"""
         return None
+    def profit_usd(self) -> float:
+        """profit in usd"""
+        if self.profit() is None:
+            return None
+        return self.profit() / 100
+    def start_time(self):
+        return self.placement_time()
+    def duration(self):
+        return timedelta(minutes=1)
 
 class FanduelSportsBet(SportsBet):
     def __init__(self, raw_wager, bet_settled: bool, placement_time, predicted_settle_time, actual_settle_time, stake_cents, outcome: WagerOutcome, actual_payout_cents):
@@ -152,26 +173,51 @@ class DraftKingsSportsBet(SportsBet):
             return None
         return self._actual_payout_cents - self._stake_cents
 
-def load_raw_fanduel_from_sportsbookscout() -> "list[Sbs_fanduel_csv_row]":
-    with open('data/fanduel_raw.csv', 'r') as csvfile:
-        reader = csv.DictReader(csvfile)
-        reader.fieldnames = [field.replace(' ', '_') for field in reader.fieldnames]
-        return [row for row in reader]
+def load_and_merge_raw_fanduel_from_sportsbookscout() -> "list[Sbs_fanduel_csv_row]":
+    def actual_leg_id(row: Sbs_fanduel_csv_row) -> str:
+        return row['External_Bet_ID'] + row['Event_Name'] + row['Market_Name'] + row['Bet_Selection']
+    obj = dict()
+    for file in sorted(os.listdir('data/sportsbooks_raw')):
+        if not file.startswith('fanduel'):
+            continue
+        with open(f'data/sportsbooks_raw/{file}', 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            reader.fieldnames = [field.replace(' ', '_') for field in reader.fieldnames]
+            for row in reader:
+                leg_id = actual_leg_id(row)
+                obj[leg_id] = row
+    return [obj[key] for key in sorted(obj.keys())]
 
-def load_raw_draftkings_from_sportsbookscout() -> "list[Sbs_draftkings_csv_row]":
-    with open('data/draftkings_raw.csv', 'r') as csvfile:
-        reader = csv.DictReader(csvfile)
-        reader.fieldnames = [field.replace(' ', '_') for field in reader.fieldnames]
-        return [row for row in reader]
+def load_and_merge_raw_draftkings_from_sportsbookscout() -> "list[Sbs_draftkings_csv_row]":
+    def actual_leg_id(row: Sbs_draftkings_csv_row) -> str:
+        return row['External_Bet_ID'] + row['Market_Name'] + row['Bet_Selection'] + row['Bet_American_Odds']
+    obj = dict()
+    for file in sorted(os.listdir('data/sportsbooks_raw')):
+        if not file.startswith('draftkings'):
+            continue
+        with open(f'data/sportsbooks_raw/{file}', 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            reader.fieldnames = [field.replace(' ', '_') for field in reader.fieldnames]
+            for row in reader:
+                leg_id = actual_leg_id(row)
+                # if leg_id in obj:
+                #     for field in row:
+                #         if field != 'Bet_Settled_Date' and obj[leg_id][field] != row[field]:
+                #             print(f'Old: {obj[leg_id]}')
+                #             print(f'New: {row}')
+                #             ans += 1
+                #             break
+                obj[leg_id] = row
+    return [obj[key] for key in sorted(obj.keys())]
 
 def fanduel_sportsbet_from_sbs(rw: Sbs_fanduel_csv_row) -> FanduelSportsBet:
     print(rw)
     return FanduelSportsBet(
         rw,
         bet_settled=parse_bet_settled(rw['Bet_Settled']),
-        placement_time=rw['Bet_Date_Time'],
-        predicted_settle_time=rw['Bet_Settled_Date'],
-        actual_settle_time=rw['Bet_Settled_Date'],
+        placement_time=parse_datetime(rw['Bet_Date_Time']),
+        predicted_settle_time=parse_datetime(rw['Bet_Settled_Date']),
+        actual_settle_time=parse_datetime(rw['Bet_Settled_Date']),
         stake_cents=int(float(rw['Bet_Amount']) * 100),
         outcome=parse_bet_result(rw['Bet_Result']),
         actual_payout_cents=parse_cents_from_string(rw['Payout']),
@@ -182,26 +228,59 @@ def draftkings_sportsbet_from_sbs(rw: Sbs_draftkings_csv_row) -> DraftKingsSport
     return DraftKingsSportsBet(
         rw,
         bet_settled=parse_bet_settled(rw['Bet_Settled']),
-        placement_time=rw['Bet_Date_Time'],
-        predicted_settle_time=rw['Bet_Settled_Date'],
-        actual_settle_time=rw['Bet_Settled_Date'],
+        placement_time=parse_datetime(rw['Bet_Date_Time']),
+        predicted_settle_time=parse_datetime(rw['Bet_Settled_Date']),
+        actual_settle_time=parse_datetime(rw['Bet_Settled_Date']),
         stake_cents=int(float(rw['Bet_Amount']) * 100),
         outcome=parse_bet_result(rw['Bet_Result']),
         actual_payout_cents=parse_cents_from_string(rw['Payout']),
     )
 
 def get_all_events() -> 'tuple[list[SportsBet]]':
-    fd = [fanduel_sportsbet_from_sbs(bet) for bet in load_raw_fanduel_from_sportsbookscout()]
-    dk = [draftkings_sportsbet_from_sbs(bet) for bet in load_raw_draftkings_from_sportsbookscout()]
+    fd = [fanduel_sportsbet_from_sbs(bet) for bet in load_and_merge_raw_fanduel_from_sportsbookscout()]
+    dk = [draftkings_sportsbet_from_sbs(bet) for bet in load_and_merge_raw_draftkings_from_sportsbookscout()]
     return fd, dk
+
+#######################################################################################
+# Analysis and visualization
+#######################################################################################
+
+def get_cumulative_profits(events: 'list[SportsBet]', x_point='settle_time', discretization='day'):
+    """x_point: 'settle_time' or 'placement_time'"""
+    assert x_point in ['settle_time', 'placement_time']
+    get_time = lambda event: event.actual_settle_time() if x_point=='settle_time' else event.placement_time()
+    def discretize_time(time: datetime):
+        if discretization=='day':
+            return time.replace(hour=0, minute=0, second=0, microsecond=0)
+        raise ValueError(f"Unknown discretization: {discretization}")
+    events = [event for event in events if get_time(event) is not None]
+    events.sort(key=lambda event: get_time(event))
+    xs = []
+    ys = []
+    profit = 0
+    for event in events:
+        if event.profit() is not None:
+            profit += event.profit()
+            time = discretize_time(get_time(event))
+            if len(xs) == 0 or time != xs[-1]:
+                xs.append(time)
+                ys.append(profit)
+            else:
+                ys[-1] = profit
+    return xs, ys
 
 if __name__ == '__main__':
     fd, dk = get_all_events()
     for sportsbook in (fd, dk):
         profit = 0
+        num_legs = 0
+        num_bets = 0
         for event in sportsbook:
             if event.profit() is not None:
+                num_legs += 1
                 if event._raw_wager['Primary'] == '0':
                     continue
+                num_bets += 1
                 profit += event.profit()
+        print(f'Settled bets (legs): {num_legs}, (bets): {num_bets}')
         print(f'${profit / 100}')

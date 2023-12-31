@@ -1,14 +1,14 @@
-from common import TimedEvent
+from common import TimedEvent, DATA_DIR
 
 import requests
 import json
 from datetime import datetime, timedelta
 
-RAW_PATH = 'data/codeforces_raw.json'
+RAW_PATH = f'{DATA_DIR}/codeforces_raw.json'
 
-def get_and_save_raw_data():
+def fetch_and_save_raw_data():
     url_base = "https://codeforces.com/api/user.rating?handle="
-    username = input('username: ')
+    username = input('Codeforces username: ')
     url = url_base + username
     r = requests.get(url)
     j = r.json()
@@ -20,6 +20,9 @@ def get_and_save_raw_data():
     print('saving')
     with open(RAW_PATH, 'w') as f:
         json.dump(j, f)
+
+def fetch_and_update_raw_data():
+    fetch_and_save_raw_data()
 
 def load_raw_data():
     with open(RAW_PATH, 'r') as f:
@@ -46,4 +49,4 @@ def get_all_events() -> "list[TimedEvent]":
     return [Contest(contest) for contest in contests['result']]
 
 if __name__ == '__main__':
-    get_and_save_raw_data()
+    fetch_and_save_raw_data()

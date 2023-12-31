@@ -1,4 +1,14 @@
 from datetime import datetime, timedelta
+
+DATA_DIR = 'data'
+
+class EventCollection:
+    @property
+    def name(self) -> str:
+        pass
+    def fetch_and_update_raw_data(self):
+        pass
+
 class TimedEvent:
     def start_time(self) -> datetime:
         pass

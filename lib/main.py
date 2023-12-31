@@ -1,12 +1,25 @@
-import opendota
-import typeracer
-import lichess
 import codeforces
+import lichess
 import nyt_crossword
+import opendota
+import sportsbooks
+import typeracer
 from datetime import timedelta
 from matplotlib import pyplot as plt
+from utils import make_trailing_average
+
+all_statistics = [
+    # codeforces,
+    # lichess,
+    # typeracer,
+    # nyt_crossword,
+    # opendota,
+    # sportsbooks
+]
 
 if __name__ == '__main__':
+    for statistic in all_statistics:
+        statistic.fetch_and_update_raw_data()
     cf = codeforces.get_all_events()
     lc = lichess.get_all_events()
     tr = typeracer.get_all_events()
@@ -26,6 +39,34 @@ if __name__ == '__main__':
         print(f'{title} {time_per_year}')
     plt.ylabel('Hours')
     plt.xlabel('Year')
+    plt.title("Time spent by Kevin on various activities")
     plt.xticks(years, rotation=300)
     plt.legend()
+    plt.show()
+
+    # sports betting:
+    fd, dk = sportsbooks.get_all_events()
+    all_sportbets = fd+dk
+    all_sportbets.sort(key=lambda x: x.start_time())
+    cum_profits_x, cum_profits_y = sportsbooks.get_cumulative_profits(all_sportbets, x_point='settle_time')
+    plt.axhline(y=0, color='black', linestyle='--', linewidth=0.5, zorder=-1)
+    plt.scatter([bet.actual_settle_time() for bet in all_sportbets], [bet.profit_usd() for bet in all_sportbets], alpha=0.4, s=12, zorder=2)
+    plt.plot(cum_profits_x, [cum_profit/100 for cum_profit in cum_profits_y], label='Cumulative profit', color='grey', linewidth=1, zorder=0)
+    plt.ylabel('Profit (USD)')
+    plt.xlabel('Date Settled')
+    plt.xticks(rotation='vertical')
+    plt.legend()
+    plt.title("Sports betting profits")
+    plt.show()
+
+    # typeracer:
+    tr.sort(key=lambda x: x.start_time())
+    xs, ys = [t.start_time() for t in tr], [t.wpm for t in tr]
+    avgs, _ = make_trailing_average(xs, ys, gamma_day=0.998, gamma_event=0.99)
+    plt.plot(xs, avgs, label='Trailing average', color='grey', linewidth=1, zorder=5)
+    plt.scatter(xs, ys, alpha=0.4, s=12, zorder=4)
+    plt.ylim(70, plt.ylim()[1])
+    plt.title("Typeracer WPM")
+    plt.legend()
+    plt.grid()
     plt.show()

@@ -5,12 +5,26 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 import os
 
-from common import TimedEvent
+from common import DATA_DIR, TimedEvent
 
-RAW_PATH = "data/typeracer_raw.json"
-TEXT_DATA_PATH = "data/typeracer_text_data.json"
+RAW_PATH = f"{DATA_DIR}/typeracer_raw.json"
+TEXT_DATA_PATH = f"{DATA_DIR}/typeracer_text_data.json"
 
-def get_and_save_raw_data():
+# API returns data that looks like this:
+# {"wpm": 110.4, "ac": 0.98, "r": 2, "t": 1680309728.065, "sl": "L6", "tid": 3620627, "gn": 1082, "np": 2, "pts": 71.76}
+# Best guesses for what these mean:
+# wpm: words per minute
+# ac: accuracy
+# r: rank
+# t: timestamp
+# sl: skill level (from 1 to 6? https://teachmehelp.zendesk.com/hc/en-us/articles/14560809798423-What-do-the-Skill-Levels-and-Experience-Levels-mean- )
+# tid: text id
+# gn: game number
+# np: number of players
+# pts: points
+
+def fetch_and_save_raw_data():
+    print('fetching Typeracer data...')
     username = input('username: ')
     url = f'https://data.typeracer.com/games?playerId=tr:{username}&universe=play&startDate=1295166400&endDate=1780990695&n=10000'
     r = requests.get(url)
@@ -19,12 +33,15 @@ def get_and_save_raw_data():
     with open(RAW_PATH, 'w') as f:
         json.dump(j, f)
 
+def fetch_and_update_raw_data():
+    fetch_and_save_raw_data()
+
 def load_raw_data():
     with open(RAW_PATH, 'r') as f:
         x = json.load(f)
     return x
 
-def get_text(text_id):
+def fetch_text(text_id):
     r = requests.get(f'https://typeracerdata.com/text?id={text_id}')
     soup = BeautifulSoup(r.text, 'html.parser')
     return soup.find('p').text.strip()
@@ -38,7 +55,7 @@ def get_and_save_text_data(races):
         text_id = race['tid']
         if text_id in d:
             continue
-        text = get_text(text_id)
+        text = fetch_text(text_id)
         d[text_id] = text
     print('saving')
     with open(TEXT_DATA_PATH, 'w') as f:
@@ -67,8 +84,11 @@ class TypeRacerRace(TimedEvent):
         return self._end_time
     def duration(self) -> timedelta:
         return self._duration
+    @property
+    def wpm(self) -> float:
+        return self._raw['wpm']
     
-def get_all_events():
+def get_all_events() -> "list[TypeRacerRace]":
     races = load_raw_data()
     texts = load_text_data()
     ans = []
@@ -82,7 +102,7 @@ def get_all_events():
     return ans
 
 if __name__ == '__main__':
-    get_and_save_raw_data()
+    fetch_and_save_raw_data()
     races = load_raw_data()
     get_and_save_text_data(races)
     analyze(races)

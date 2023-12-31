@@ -1,12 +1,13 @@
 import requests
 import json
 from datetime import datetime, timedelta
-from common import TimedEvent
+from common import TimedEvent, DATA_DIR
 
-RAW_PATH = 'data/lichess_raw.json'
-def get_and_save_raw_data():
+RAW_PATH = f'{DATA_DIR}/lichess_raw.json'
+def fetch_and_save_raw_data():
+    print('fetching all Lichess data...')
     # TODO: dont download entire data each time, just new data
-    username = input("username: ")
+    username = input("Lichess username: ")
     # url = f'https://lichess.org/api/user/{username}/activity'
     nb = 10000000
     # for now, don't get moves or PGN
@@ -17,6 +18,32 @@ def get_and_save_raw_data():
         obj = json.loads(l)
         games.append(obj)
     print(games)
+    with open(RAW_PATH, 'w') as f:
+        json.dump(games, f)
+
+def fetch_and_update_raw_data():
+    print('fetching new Lichess data...')
+    with open(RAW_PATH, 'r') as f:
+        games = json.load(f)
+    game_ids = {game['id'] for game in games}
+
+    username = input("Lichess username: ")
+    # url = f'https://lichess.org/api/user/{username}/activity'
+    nb = 10000000
+    # for now, don't get moves or PGN
+    url = f'https://lichess.org/api/games/user/{username}?max={nb}&moves=no&pgnInJson=false'
+    r = requests.get(url, headers={'Accept': 'application/x-ndjson'})
+    for l in r.iter_lines():
+        obj = json.loads(l)
+        game_id = obj['id']
+        if game_id in game_ids:
+            # TODO: uh, wait... the request already requested everything, so this does not save any time (the bottleneck is the server request)
+            #       instead, look for a parameter to only get games that take place after that time.
+            print(f'Game {game_id} already saved. Breaking.')
+            break
+        games.append(obj)
+        game_ids.add(game_id)
+    
     with open(RAW_PATH, 'w') as f:
         json.dump(games, f)
 
@@ -64,5 +91,5 @@ def get_all_events():
     return [LichessGame(game) for game in games]    
 
 if __name__ == '__main__':
-    # get_and_save_raw_data()
+    # fetch_and_save_raw_data()
     analyze()
